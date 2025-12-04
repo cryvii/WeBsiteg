@@ -1,19 +1,17 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
     ports:
       - "3000:3000"
-      - "5173:5173"
-    volumes:
-      - .:/app
-      - /app/node_modules
-      - ./uploads:/app/uploads
     environment:
       - DATABASE_URL=postgres://user:password@db:5432/bunker
       - ORIGIN=http://localhost:3000
+      - BODY_SIZE_LIMIT=Infinity
     depends_on:
       - db
-    command: bun run dev --host
+    restart: always
 
   db:
     image: postgres:16-alpine
@@ -24,7 +22,8 @@ services:
       - POSTGRES_PASSWORD=password
       - POSTGRES_DB=bunker
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata_prod:/var/lib/postgresql/data
+    restart: always
 
 volumes:
-  pgdata:
+  pgdata_prod:

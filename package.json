@@ -11,7 +11,8 @@
     "verify-schema": "tsx scripts/verify-schema.ts",
     "verify-deployment": "tsx scripts/verify-deployment.ts",
     "verify-self-hosting": "tsx scripts/verify-self-hosting.ts",
-    "verify-env-security": "tsx scripts/verify-env-security.ts"
+    "verify-env-security": "tsx scripts/verify-env-security.ts",
+    "db:migrate": "drizzle-kit migrate"
   },
   "devDependencies": {
     "@sveltejs/adapter-node": "^5.0.0",

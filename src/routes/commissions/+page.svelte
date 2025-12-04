@@ -4,6 +4,7 @@
   let loading = false;
   let message = '';
   let error = '';
+  let selectedFiles: File[] = [];
 
   async function handleSubmit(event: SubmitEvent) {
     loading = true;
@@ -11,8 +12,35 @@
     error = '';
     
     const form = event.target as HTMLFormElement;
-    const data = new FormData(form);
-    const payload = Object.fromEntries(data.entries());
+    const formData = new FormData(form);
+
+    // Upload files if any
+    let referenceImages: string[] = [];
+    if (selectedFiles.length > 0) {
+      for (const file of selectedFiles) {
+        const uploadFormData = new FormData();
+        uploadFormData.append('file', file);
+        
+        try {
+          const uploadRes = await fetch('/api/upload', {
+            method: 'POST',
+            body: uploadFormData
+          });
+          
+          if (uploadRes.ok) {
+            const { url } = await uploadRes.json();
+            referenceImages.push(url);
+          }
+        } catch (err) {
+          console.error('File upload failed:', err);
+        }
+      }
+    }
+
+    const payload = Object.fromEntries(formData.entries());
+    if (referenceImages.length > 0) {
+      payload.reference_images = JSON.stringify(referenceImages);
+    }
 
     try {
       const res = await fetch('/api/commission', {
@@ -27,11 +55,17 @@
       
       message = 'Request sent! I will review it shortly.';
       form.reset();
+      selectedFiles = [];
     } catch (e: any) {
       error = e.message;
     } finally {
       loading = false;
     }
+  }
+
+  function handleFileSelect(e: Event) {
+    const input = e.target as HTMLInputElement;
+    selectedFiles = Array.from(input.files || []);
   }
 </script>
 
@@ -106,6 +140,26 @@
               placeholder="Describe your vision..."
               required
             ></textarea>
+          </div>
+
+          <div>
+            <label for="reference_images" class="block font-bold mb-2 font-mono text-sm uppercase tracking-wider text-ink-light dark:text-dark-ink-dim">
+              Reference Images (Optional)
+            </label>
+            <input 
+              id="reference_images"
+              name="reference_images" 
+              type="file" 
+              multiple
+              accept="image/*"
+              on:change={handleFileSelect}
+              class="w-full border-2 border-ink-light dark:border-dark-ink-dim focus:border-ink dark:focus:border-dark-ink outline-none p-3 bg-transparent transition-colors file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-ink file:text-paper dark:file:bg-dark-ink dark:file:text-dark-bg cursor-pointer" 
+            />
+            {#if selectedFiles.length > 0}
+              <p class="text-sm text-ink-light dark:text-dark-ink-dim mt-2">
+                {selectedFiles.length} file(s) selected
+              </p>
+            {/if}
           </div>
 
           <button 

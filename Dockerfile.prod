@@ -1,0 +1,25 @@
+# Build stage
+FROM oven/bun:1 AS builder
+
+WORKDIR /app
+
+COPY package.json bun.lockb* ./
+RUN bun install --frozen-lockfile
+
+COPY . .
+# Set adapter to node for the build
+ENV ADAPTER=node
+RUN bun run build
+
+# Production stage
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY --from=builder /app/build ./build
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./
+
+EXPOSE 3000
+
+CMD ["node", "build"]

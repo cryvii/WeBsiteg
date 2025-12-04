@@ -24,5 +24,9 @@ export const commissions = pgTable('commissions', {
     price: integer('price'), // In cents or whole dollars
     status: statusEnum('status').default('pending').notNull(),
     rejection_reason: text('rejection_reason'),
+    accepted_at: timestamp('accepted_at'), // When admin accepted the commission
+    completion_date: timestamp('completion_date'), // When admin committed to completing
+    scheduled_at: timestamp('scheduled_at'), // When artist scheduled a time to work on it
+    reference_images: text('reference_images').default('[]'), // JSON array of image URLs
     created_at: timestamp('created_at').defaultNow().notNull(),
 });
