@@ -7,20 +7,29 @@ function hashPassword(password: string): string {
   return crypto.createHash('sha256').update(password).digest('hex');
 }
 
-const ADMIN_USERNAME = 'Test';
-const ADMIN_PASSWORD_HASH = hashPassword('test123');
+// Allow configuring admin credentials via environment variables for production.
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'Test';
+const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH || hashPassword(process.env.ADMIN_PASSWORD || 'test123');
 
 export async function POST({ request, cookies }: RequestEvent) {
   const body = await request.json();
-  const { username, password } = body;
+  const rawUsername = body.username ?? '';
+  const rawPassword = body.password ?? '';
 
-  if (username !== ADMIN_USERNAME || hashPassword(password) !== ADMIN_PASSWORD_HASH) {
+  const username = String(rawUsername).trim();
+  const password = String(rawPassword).trim();
+
+  const usernameMatches = username.toLowerCase() === ADMIN_USERNAME.toLowerCase();
+  const passwordMatches = hashPassword(password) === ADMIN_PASSWORD_HASH;
+
+  if (!usernameMatches || !passwordMatches) {
+    console.warn(`Admin login failed for user: ${username}`);
     return json({ error: 'Invalid credentials' }, { status: 401 });
   }
 
   // Create session token
   const sessionId = crypto.randomUUID();
-  
+
   // Set secure cookie (browser will handle session)
   cookies.set('admin_session', sessionId, {
     path: '/',
