@@ -60,6 +60,14 @@
     const clicked = new Date(year, month, d);
     dispatch('dayClick', { date: clicked.toISOString() });
   }
+
+  function isWithinNextDays(day: number, daysWindow = 4) {
+    const today = new Date();
+    today.setHours(0,0,0,0);
+    const cellDate = new Date(year, month, day);
+    const diffDays = Math.ceil((cellDate.getTime() - today.getTime()) / (1000*60*60*24));
+    return diffDays >= 0 && diffDays <= daysWindow;
+  }
 </script>
 
 <div class="bg-slate-800 rounded-lg p-6 border border-slate-700">
@@ -103,18 +111,10 @@
       {@const accepted = getAcceptedEventsForDay(day)}
       {@const completion = getCompletionEventsForDay(day)}
       {@const scheduled = getScheduledEventsForDay(day)}
-      {#if (() => {
-        // compute whether this cell is within the next 4 days (inclusive)
-        const today = new Date();
-        today.setHours(0,0,0,0);
-        const cellDate = new Date(year, month, day);
-        const diffDays = Math.ceil((cellDate.getTime() - today.getTime()) / (1000*60*60*24));
-        return diffDays >= 0 && diffDays <= 4;
-      })()}
-        <div on:click={()=>onDayClick(day)} class="bg-slate-700 rounded p-2 min-h-24 overflow-y-auto border-2 border-yellow-500/40 cursor-pointer">
-      {:else}
-        <div on:click={()=>onDayClick(day)} class="bg-slate-700 rounded p-2 min-h-24 overflow-y-auto border border-slate-600 cursor-pointer">
-      {/if}
+      {@const isSoon = isWithinNextDays(day, 4)}
+      <div on:click={()=>onDayClick(day)} class={isSoon
+        ? 'bg-slate-700 rounded p-2 min-h-24 overflow-y-auto border-2 border-yellow-500/40 cursor-pointer'
+        : 'bg-slate-700 rounded p-2 min-h-24 overflow-y-auto border border-slate-600 cursor-pointer'}>
         <div class="font-bold text-white mb-1">{day}</div>
 
         {#if received.length > 0}
