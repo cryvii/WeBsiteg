@@ -4,8 +4,53 @@
   let loading = false;
   let message = "";
   let error = "";
-  let selectedFiles: File[] = [];
-  let previewUrls: string[] = [];
+  let base64Images: string[] = []; // Store the actual base64 data to send
+  let previewUrls: string[] = []; // Store data URLs for display (same as base64 usually)
+
+  // Helper to compress image
+  const compressImage = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return reject("Canvas context not available");
+
+          // Resize logic: max 1024px
+          const MAX_WIDTH = 1024;
+          const MAX_HEIGHT = 1024;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > height) {
+            if (width > MAX_WIDTH) {
+              height *= MAX_WIDTH / width;
+              width = MAX_WIDTH;
+            }
+          } else {
+            if (height > MAX_HEIGHT) {
+              width *= MAX_HEIGHT / height;
+              height = MAX_HEIGHT;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          ctx.drawImage(img, 0, 0, width, height);
+
+          // Compress to JPEG 0.7 quality
+          const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
+          resolve(dataUrl);
+        };
+        img.onerror = (err) => reject(err);
+      };
+      reader.onerror = (err) => reject(err);
+    });
+  };
 
   async function handleSubmit(event: SubmitEvent) {
     loading = true;
@@ -14,33 +59,13 @@
 
     const form = event.target as HTMLFormElement;
     const formData = new FormData(form);
-
-    // Upload files if any
-    let referenceImages: string[] = [];
-    if (selectedFiles.length > 0) {
-      for (const file of selectedFiles) {
-        const uploadFormData = new FormData();
-        uploadFormData.append("file", file);
-
-        try {
-          const uploadRes = await fetch("/api/upload", {
-            method: "POST",
-            body: uploadFormData,
-          });
-
-          if (uploadRes.ok) {
-            const { url } = await uploadRes.json();
-            referenceImages.push(url);
-          }
-        } catch (err) {
-          console.error("File upload failed:", err);
-        }
-      }
-    }
-
     const payload = Object.fromEntries(formData.entries());
-    if (referenceImages.length > 0) {
-      payload.reference_images = JSON.stringify(referenceImages);
+
+    // Attach processed base64 images
+    // We send them as a JSON string inside the 'reference_images' field
+    // The backend expects a JSON string of an array of strings
+    if (base64Images.length > 0) {
+      payload.reference_images = JSON.stringify(base64Images);
     } else {
       payload.reference_images = "[]";
     }
@@ -58,7 +83,7 @@
 
       message = "Request sent! I will review it shortly.";
       form.reset();
-      selectedFiles = [];
+      base64Images = [];
       previewUrls = [];
     } catch (e: any) {
       error = e.message;
@@ -67,34 +92,33 @@
     }
   }
 
-  function handleFileSelect(e: Event) {
+  async function handleFileSelect(e: Event) {
     const input = e.target as HTMLInputElement;
     const newFiles = Array.from(input.files || []);
 
-    if (selectedFiles.length + newFiles.length > 10) {
+    if (base64Images.length + newFiles.length > 10) {
       alert("You can only upload a maximum of 10 images.");
       return;
     }
 
-    selectedFiles = [...selectedFiles, ...newFiles];
-
-    // Generate previews
-    newFiles.forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        if (e.target?.result) {
-          previewUrls = [...previewUrls, e.target.result as string];
-        }
-      };
-      reader.readAsDataURL(file);
-    });
-
-    // Reset input so same file can be selected again if needed (though we append)
-    input.value = "";
+    loading = true; // Show loading while processing
+    try {
+      for (const file of newFiles) {
+        const compressed = await compressImage(file);
+        base64Images = [...base64Images, compressed];
+        previewUrls = [...previewUrls, compressed];
+      }
+    } catch (err) {
+      console.error("Image processing failed:", err);
+      error = "Failed to process one or more images.";
+    } finally {
+      loading = false;
+      input.value = "";
+    }
   }
 
   function removeImage(index: number) {
-    selectedFiles = selectedFiles.filter((_, i) => i !== index);
+    base64Images = base64Images.filter((_, i) => i !== index);
     previewUrls = previewUrls.filter((_, i) => i !== index);
   }
 </script>
@@ -208,13 +232,13 @@
               accept="image/*"
               on:change={handleFileSelect}
               class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-              disabled={selectedFiles.length >= 10}
+              disabled={base64Images.length >= 10}
             />
             <div class="pointer-events-none">
               <p
                 class="font-mono text-sm text-ink-light dark:text-dark-ink-dim group-hover:text-ink dark:group-hover:text-dark-ink"
               >
-                {selectedFiles.length >= 10
+                {base64Images.length >= 10
                   ? "Limit Reached"
                   : "Click or Drag images here"}
               </p>
@@ -244,7 +268,7 @@
             <p
               class="text-xs text-right mt-1 text-ink-light dark:text-dark-ink-dim font-mono"
             >
-              {selectedFiles.length}/10
+              {base64Images.length}/10
             </p>
           {/if}
         </div>
