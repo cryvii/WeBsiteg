@@ -1,474 +1,905 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
-  import { onMount } from 'svelte';
-  import CommissionCalendar from '$lib/components/CommissionCalendar.svelte';
+  import { goto } from "$app/navigation";
+  import { onMount } from "svelte";
+  import CommissionCalendar from "$lib/components/CommissionCalendar.svelte";
+  import ImageGallery from "$lib/components/ImageGallery.svelte";
+  import DatePicker from "$lib/components/DatePicker.svelte";
+  import ResultFlashcard from "$lib/components/ResultFlashcard.svelte";
 
   let isLoggedIn = false;
-  let username = '';
-  let password = '';
+  let username = "";
+  let password = "";
   let loading = false;
-  let error = '';
+  let error = "";
   let commissions: any[] = [];
-  let activeTab = 'list'; // kept for backward compatibility but UI now shows both
-  let emailTemplate = '';
+  let emailTemplate = "";
   let showEmailPreview = false;
-  let emailRecipient = '';
-  // Scheduling modal state
-  let showScheduleModal = false;
-  let scheduleDateIso = '';
-  let scheduleSelectedCommissionId: number | null = null;
-  let scheduleTime = '12:00';
+  let emailRecipient = "";
+
+  // Image gallery state
+  let showImageGallery = false;
+  let galleryImages: string[] = [];
+  let galleryInitialIndex = 0;
+
+  // Payment modal state
+  let showPaymentModal = false;
+  let paymentCommissionId: number | null = null;
+  let paymentAmount = "";
+  let paymentReference = "";
+
+  // Delete confirmation modal state
+  let showDeleteModal = false;
+  let deleteCommissionId: number | null = null;
+
+  // Result upload state
+  let uploadingResultFor: number | null = null;
+
+  // Flippable archives state
+  let flippedCards: Set<number> = new Set();
+
+  // Preview state
+  let previewRange: { start: string; end: string } | null = null;
+  let previewDays: number | null = null;
+  let previewCommId: number | null = null;
+
+  // Computed: Active vs Archived commissions
+  $: activeCommissions = commissions.filter(
+    (c) => c.status !== "completed" && c.status !== "rejected",
+  );
+  $: archivedCommissions = commissions
+    .filter((c) => c.status === "completed" || c.status === "rejected")
+    .sort((a, b) => {
+      const dateA = a.completion_date
+        ? new Date(a.completion_date).getTime()
+        : new Date(a.created_at).getTime();
+      const dateB = b.completion_date
+        ? new Date(b.completion_date).getTime()
+        : new Date(b.created_at).getTime();
+      return dateB - dateA;
+    });
+  $: completedCount = commissions.filter(
+    (c) => c.status === "completed",
+  ).length;
+
+  $: totalEarnings = commissions
+    .filter((c) => c.status === "completed" && c.paid_amount)
+    .reduce((sum, c) => sum + (c.paid_amount || 0), 0);
 
   onMount(async () => {
-    // Check if already logged in
-    const res = await fetch('/api/admin/check-auth');
+    const res = await fetch("/api/admin/check-auth");
     if (res.ok) {
       isLoggedIn = true;
-      loadCommissions();
+      await loadCommissions();
     }
   });
 
-  async function handleLogin(e: SubmitEvent) {
+  async function handleLogin(e: Event) {
     e.preventDefault();
     loading = true;
-    error = '';
+    error = "";
 
     try {
-      const res = await fetch('/api/admin/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
+      const res = await fetch("/api/admin/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
       });
 
       const data = await res.json();
-
       if (!res.ok) {
-        error = data.error || 'Login failed';
+        error = data.error || "Login failed";
         loading = false;
         return;
       }
 
       isLoggedIn = true;
-      loadCommissions();
-    } catch (err: any) {
-      error = err.message || 'Something went wrong';
+      await loadCommissions();
+    } catch (err) {
+      error = "Network error";
       loading = false;
     }
   }
 
+  async function handleLogout() {
+    await fetch("/api/admin/logout", { method: "POST" });
+    isLoggedIn = false;
+    commissions = [];
+    goto("/admin");
+  }
+
   async function loadCommissions() {
-    const res = await fetch('/api/admin/commissions');
+    const res = await fetch("/api/admin/commissions");
     if (res.ok) {
       commissions = await res.json();
     }
   }
 
-  async function handleLogout() {
-    await fetch('/api/admin/logout', { method: 'POST' });
-    isLoggedIn = false;
-    username = '';
-    password = '';
-  }
+  async function updateCommissionStatus(
+    id: number,
+    status: string,
+    acceptedAt?: string,
+    dueDate?: string,
+  ) {
+    const body: any = { id, status };
+    if (acceptedAt) body.accepted_at = acceptedAt;
+    if (dueDate) body.completion_date = dueDate;
 
-  async function updateCommissionStatus(id: number, status: string, acceptedAt?: string, completionDate?: string) {
-    const payload: any = { id, status };
-    if (acceptedAt) payload.accepted_at = acceptedAt;
-    if (completionDate) payload.completion_date = completionDate;
-    // scheduled_at may be included by caller
-    if ((payload as any).scheduled_at) payload.scheduled_at = (payload as any).scheduled_at;
-
-    const res = await fetch('/api/admin/commissions', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+    const res = await fetch("/api/admin/commissions", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
     });
 
-    if (res.ok) {
-      loadCommissions();
-    }
+    if (res.ok) await loadCommissions();
   }
 
-  async function handleAccept(commId: number) {
-    const dueDateInput = document.getElementById(`due-date-${commId}`) as HTMLInputElement;
-    const dueDate = dueDateInput?.value;
-    const today = new Date().toISOString().split('T')[0]; // Today's date for acceptance
-    updateCommissionStatus(commId, 'approved', today, dueDate);
-  }
-
-  async function handleReject(commId: number) {
-    updateCommissionStatus(commId, 'rejected');
+  async function handleApprove(commId: number) {
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const dueDate = previewRange?.end
+      ? previewRange.end.split("T")[0]
+      : undefined;
+    await updateCommissionStatus(commId, "approved", today, dueDate);
   }
 
   async function handleComplete(commId: number) {
-    updateCommissionStatus(commId, 'completed');
+    await updateCommissionStatus(commId, "completed");
   }
 
-  async function handlePaid(commId: number) {
-    updateCommissionStatus(commId, 'paid');
+  function openDeleteModal(commId: number) {
+    deleteCommissionId = commId;
+    showDeleteModal = true;
   }
 
-  function formatDate(date: string | null) {
-    if (!date) return '-';
-    return new Date(date).toLocaleDateString();
+  function closeDeleteModal() {
+    showDeleteModal = false;
+    deleteCommissionId = null;
   }
 
-  function generateAcceptanceEmail(comm: any) {
-    const dueDate = comm.completion_date ? new Date(comm.completion_date).toLocaleDateString() : '[completion date]';
-    const template = `Subject: Commission Accepted! 🎨
-
-Dear ${comm.client_name},
-
-Thank you for your commission request! I'm pleased to let you know that I've accepted your project.
-
-Project Details:
-- Description: ${comm.description}
-- Estimated Completion: ${dueDate}
-
-I'll work on this with care and attention to detail. If I have any questions, I'll reach out to you.
-
-Looking forward to creating this for you!
-
-Best regards,
-[Your Name]`;
-    return template;
+  async function confirmDelete() {
+    if (!deleteCommissionId) return;
+    const res = await fetch("/api/admin/commissions", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: deleteCommissionId }),
+    });
+    if (res.ok) await loadCommissions();
+    closeDeleteModal();
   }
 
-  function generateRejectionEmail(comm: any) {
-    const template = `Subject: Commission Request - Status Update
-
-Dear ${comm.client_name},
-
-Thank you so much for your commission request. I appreciate your interest in my work!
-
-Unfortunately, I'm unable to accept this project at this time due to my current workload and scheduling constraints. 
-
-Feel free to reach out in the future, and I hope we can work together when the timing is right.
-
-Best regards,
-[Your Name]`;
-    return template;
+  function openPaymentModal(commId: number) {
+    paymentCommissionId = commId;
+    paymentAmount = "";
+    paymentReference = "";
+    showPaymentModal = true;
   }
 
-  function openEmailTemplate(comm: any, type: 'accept' | 'reject') {
-    emailRecipient = comm.email;
-    emailTemplate = type === 'accept' ? generateAcceptanceEmail(comm) : generateRejectionEmail(comm);
-    showEmailPreview = true;
+  function closePaymentModal() {
+    showPaymentModal = false;
+    paymentCommissionId = null;
   }
 
-  function openGmailComposer() {
-    const subject = emailTemplate.split('\n')[0].replace('Subject: ', '');
-    const body = emailTemplate.split('\n').slice(2).join('\n');
-    const gmailUrl = `https://mail.google.com/mail/u/0/?view=cm&to=${emailRecipient}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    window.open(gmailUrl, '_blank');
-    showEmailPreview = false;
+  async function confirmPayment() {
+    if (!paymentCommissionId || !paymentAmount) return;
+    const amountInCents = Math.round(parseFloat(paymentAmount) * 100);
+
+    const res = await fetch("/api/admin/commissions", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: paymentCommissionId,
+        status: "paid",
+        paid_amount: amountInCents,
+        payment_reference: paymentReference,
+      }),
+    });
+
+    if (res.ok) await loadCommissions();
+    closePaymentModal();
   }
 
-  function copyToClipboard() {
-    navigator.clipboard.writeText(emailTemplate);
-    alert('Email template copied to clipboard!');
+  function openImageGallery(images: string[], index: number) {
+    galleryImages = images;
+    galleryInitialIndex = index;
+    showImageGallery = true;
   }
 
-  function handleAcceptWithEmail(commId: number) {
-    const dueDateInput = document.getElementById(`due-date-${commId}`) as HTMLInputElement;
-    if (!dueDateInput || !dueDateInput.value) {
-      alert('Please select a completion date');
+  async function handleResultDrop(commId: number, event: DragEvent) {
+    event.preventDefault();
+    const files = Array.from(event.dataTransfer?.files || []);
+    if (files.length > 0) await uploadResultImages(commId, files);
+  }
+
+  function handleResultFileSelect(commId: number, event: Event) {
+    const input = event.target as HTMLInputElement;
+    const files = Array.from(input.files || []);
+    if (files.length > 0) uploadResultImages(commId, files);
+  }
+
+  async function uploadResultImages(commId: number, files: File[]) {
+    uploadingResultFor = commId;
+    const formData = new FormData();
+    formData.append("commission_id", commId.toString());
+    files.forEach((file) => formData.append("images", file));
+
+    try {
+      const res = await fetch("/api/admin/upload-result", {
+        method: "POST",
+        body: formData,
+      });
+      if (res.ok) await loadCommissions();
+      else alert("Failed to upload result images");
+    } catch (err) {
+      alert("Failed to upload result images");
+    } finally {
+      uploadingResultFor = null;
+    }
+  }
+
+  function toggleCardFlip(commId: number) {
+    if (flippedCards.has(commId)) {
+      flippedCards.delete(commId);
+    } else {
+      flippedCards.add(commId);
+    }
+    flippedCards = flippedCards; // Trigger reactivity
+  }
+
+  function handleDatePreview(commId: number, dateStr: string) {
+    if (!dateStr) {
+      previewRange = null;
+      previewDays = null;
+      previewCommId = null;
       return;
     }
-    const comm = commissions.find(c => c.id === commId);
-    if (comm) {
-      const selectedDate = new Date(dueDateInput.value);
-      const receivedDate = new Date(comm.created_at);
-      
-      if (selectedDate < receivedDate) {
-        alert(`Completion date cannot be before the request date (${formatDate(comm.created_at)})`);
-        return;
-      }
-      
-      openEmailTemplate(comm, 'accept');
-      handleAccept(commId);
-    }
+
+    const comm = commissions.find((c) => c.id === commId);
+    if (!comm) return;
+
+    const acceptedDate = new Date(comm.created_at);
+    const dueDate = new Date(dateStr);
+    const diffTime = Math.abs(dueDate.getTime() - acceptedDate.getTime());
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+    previewRange = { start: comm.created_at, end: dateStr };
+    previewDays = diffDays;
+    previewCommId = commId;
   }
 
   function getMinDate(createdAt: string): string {
     const date = new Date(createdAt);
-    date.setDate(date.getDate() + 1); // Minimum 1 day after received
-    return date.toISOString().split('T')[0];
+    date.setDate(date.getDate() + 1);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
   }
 
-  // Called when calendar emits dayClick
-  function onCalendarDayClick(evt: CustomEvent) {
-    scheduleDateIso = evt.detail.date; // ISO date for the day clicked
-    showScheduleModal = true;
-    scheduleSelectedCommissionId = null;
-    scheduleTime = '12:00';
+  function formatDate(dateStr: string) {
+    return new Date(dateStr).toLocaleDateString();
   }
 
-  function closeScheduleModal() {
-    showScheduleModal = false;
-  }
-
-  async function confirmSchedule() {
-    if (!scheduleSelectedCommissionId) {
-      alert('Please select a commission to schedule');
-      return;
-    }
-
-    // Build ISO datetime from clicked date and selected time
-    const datePart = scheduleDateIso.split('T')[0];
-    const iso = new Date(`${datePart}T${scheduleTime}:00`).toISOString();
-
-    // update commission with scheduled_at; keep status as approved if currently pending
-    const comm = commissions.find(c => c.id === scheduleSelectedCommissionId);
-    const newStatus = comm && comm.status === 'pending' ? 'approved' : comm.status;
-
-    const payload: any = { id: scheduleSelectedCommissionId, status: newStatus, scheduled_at: iso };
-
-    const res = await fetch('/api/admin/commissions', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-
-    if (res.ok) {
-      closeScheduleModal();
-      loadCommissions();
-    } else {
-      alert('Failed to schedule commission');
-    }
+  function getDaysBetween(startStr: string, endStr: string): number {
+    const start = new Date(startStr);
+    const end = new Date(endStr);
+    const diffTime = Math.abs(end.getTime() - start.getTime());
+    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
   }
 </script>
 
-<div class="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800">
-  {#if !isLoggedIn}
-    <!-- Login Page -->
-    <div class="flex items-center justify-center min-h-screen p-4">
-      <div class="w-full max-w-md bg-slate-800 rounded-lg shadow-xl p-8 border border-slate-700">
-        <h1 class="text-3xl font-bold text-white mb-2">Admin Panel</h1>
-        <p class="text-slate-400 mb-8">Commission Management</p>
-
-        <form on:submit={handleLogin} class="space-y-4">
-          <div>
-            <label for="username" class="block text-sm font-medium text-slate-300 mb-2">
-              Username
-            </label>
-            <input
-              id="username"
-              type="text"
-              bind:value={username}
-              required
-              class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded text-white placeholder-slate-400 focus:outline-none focus:border-blue-500 transition"
-              placeholder="Enter username"
-            />
-          </div>
-
-          <div>
-            <label for="password" class="block text-sm font-medium text-slate-300 mb-2">
-              Password
-            </label>
-            <input
-              id="password"
-              type="password"
-              bind:value={password}
-              required
-              class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded text-white placeholder-slate-400 focus:outline-none focus:border-blue-500 transition"
-              placeholder="Enter password"
-            />
-          </div>
-
-          {#if error}
-            <div class="p-3 bg-red-500/10 border border-red-500 rounded text-red-400 text-sm">
-              {error}
-            </div>
-          {/if}
-
-          <button
-            type="submit"
-            disabled={loading}
-            class="w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium rounded transition"
+{#if !isLoggedIn}
+  <!-- Login Screen -->
+  <div
+    class="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-900 to-slate-800"
+  >
+    <div
+      class="w-full max-w-md p-8 bg-slate-800 rounded-lg shadow-xl border border-slate-700"
+    >
+      <h2 class="text-3xl font-bold text-white mb-6 text-center">
+        Admin Login
+      </h2>
+      <form on:submit={handleLogin} class="space-y-4">
+        {#if error}
+          <div
+            class="p-3 bg-red-500/20 border border-red-500 rounded text-red-200 text-sm"
           >
-            {loading ? 'Logging in...' : 'Login'}
-          </button>
-        </form>
+            {error}
+          </div>
+        {/if}
+        <div>
+          <label class="block text-slate-300 mb-2">Username</label>
+          <input
+            type="text"
+            bind:value={username}
+            required
+            class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded text-white"
+          />
+        </div>
+        <div>
+          <label class="block text-slate-300 mb-2">Password</label>
+          <input
+            type="password"
+            bind:value={password}
+            required
+            class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded text-white"
+          />
+        </div>
+        <button
+          type="submit"
+          disabled={loading}
+          class="w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium rounded transition"
+        >
+          {loading ? "Logging in..." : "Login"}
+        </button>
+      </form>
+    </div>
+  </div>
+{:else}
+  <!-- Dashboard -->
+  <div class="p-8 min-h-screen bg-gradient-to-br from-slate-900 to-slate-800">
+    <!-- Header -->
+    <div class="mb-8">
+      <div class="flex justify-between items-center">
+        <h1 class="text-4xl font-bold text-white">Admin Dashboard</h1>
+        <button
+          on:click={handleLogout}
+          class="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded font-medium transition"
+        >
+          Logout
+        </button>
       </div>
     </div>
-  {:else}
-    <!-- Dashboard -->
-    <div class="p-8 min-h-screen bg-gradient-to-br from-slate-900 to-slate-800">
-      <!-- Header -->
-      <div class="mb-8">
-        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-          <h1 class="text-3xl sm:text-4xl font-bold text-white">Admin Dashboard</h1>
-          <button
-            on:click={handleLogout}
-            class="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded font-medium transition self-end sm:self-auto"
-          >
-            Logout
-          </button>
+
+    <!-- Statistics Dashboard -->
+    <div class="grid grid-cols-2 gap-6 mb-8">
+      <div class="bg-green-600/20 border border-green-600/30 rounded-lg p-6">
+        <div class="flex items-center gap-4">
+          <div class="bg-green-600/30 p-3 rounded-full">
+            <svg
+              class="w-8 h-8 text-green-400"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </svg>
+          </div>
+          <div>
+            <p class="text-green-400 text-sm font-medium">
+              Completed Commissions
+            </p>
+            <p class="text-white text-3xl font-bold">{completedCount}</p>
+          </div>
         </div>
       </div>
+      <div class="bg-blue-600/20 border border-blue-600/30 rounded-lg p-6">
+        <div class="flex items-center gap-4">
+          <div class="bg-blue-600/30 p-3 rounded-full">
+            <svg
+              class="w-8 h-8 text-blue-400"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </svg>
+          </div>
+          <div>
+            <p class="text-blue-400 text-sm font-medium">Total Earnings</p>
+            <p class="text-white text-3xl font-bold">
+              €{(totalEarnings / 100).toFixed(2)}
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
 
-      <!-- Two-column layout: list left, calendar right -->
-      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <!-- Left: List (span 7) -->
-        <div class="lg:col-span-7 space-y-4">
-          <!-- Commission List -->
-          <div class="space-y-4">
-          {#each commissions as comm (comm.id)}
-            <div class="bg-slate-800 rounded-lg p-6 border border-slate-700 hover:border-slate-600 transition">
-              <div class="flex justify-between items-start mb-4">
-                <div>
-                  <h3 class="text-xl font-bold text-white">{comm.client_name}</h3>
-                  <p class="text-slate-400 text-sm">{comm.email}</p>
-                </div>
-                <span class="px-3 py-1 rounded text-sm font-medium {comm.status === 'pending'
-                  ? 'bg-yellow-500/20 text-yellow-400'
-                  : comm.status === 'approved'
-                    ? 'bg-green-500/20 text-green-400'
-                    : 'bg-red-500/20 text-red-400'}">
-                  {comm.status.toUpperCase()}
-                </span>
-              </div>
-
-              <p class="text-slate-300 mb-4">{comm.description}</p>
-
-              <div class="grid grid-cols-3 gap-4 mb-4 text-sm">
-                <div class="bg-slate-700 p-2 rounded">
-                  <p class="text-slate-400">Received</p>
-                  <p class="text-white font-medium">{formatDate(comm.created_at)}</p>
-                </div>
-                <div class="bg-slate-700 p-2 rounded">
-                  <p class="text-slate-400">Accepted</p>
-                  <p class="text-white font-medium">{formatDate(comm.accepted_at)}</p>
-                </div>
-                <div class="bg-slate-700 p-2 rounded">
-                  <p class="text-slate-400">Due</p>
-                  <p class="text-white font-medium">{formatDate(comm.completion_date)}</p>
-                </div>
-              </div>
-
-              {#if comm.status === 'pending'}
-                <div class="space-y-2">
-                  <label class="block text-sm text-slate-300">
-                    When will you complete this? (must be after {formatDate(comm.created_at)})
-                  </label>
-                  <input
-                    type="date"
-                    id="due-date-{comm.id}"
-                    min={getMinDate(comm.created_at)}
-                    class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white text-sm"
-                    placeholder="Select completion date"
-                  />
-                  <div class="flex gap-2 mt-4">
-                    <button
-                      on:click={() => handleAcceptWithEmail(comm.id)}
-                      class="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded font-medium transition"
+    <!-- Two-column layout -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <!-- Left: Commissions List -->
+      <div class="space-y-8">
+        <!-- Active Commissions -->
+        <div>
+          <h2 class="text-2xl font-bold text-white mb-4">Active Commissions</h2>
+          {#if activeCommissions.length === 0}
+            <p class="text-slate-400">No active commissions.</p>
+          {:else}
+            <div class="space-y-4">
+              {#each activeCommissions as comm (comm.id)}
+                <div
+                  class="bg-slate-800 rounded-lg p-6 border border-slate-700"
+                >
+                  <div class="flex justify-between items-start mb-4">
+                    <div>
+                      <h3 class="text-xl font-bold text-white">
+                        {comm.client_name}
+                      </h3>
+                      <p class="text-slate-400 text-sm">{comm.email}</p>
+                    </div>
+                    <span
+                      class="px-3 py-1 rounded text-sm font-medium
+                      {comm.status === 'pending'
+                        ? 'bg-yellow-500/20 text-yellow-400'
+                        : comm.status === 'approved'
+                          ? 'bg-blue-500/20 text-blue-400'
+                          : comm.status === 'paid'
+                            ? 'bg-purple-500/20 text-purple-400'
+                            : ''}"
                     >
-                      Accept & Preview Email
-                    </button>
-                    <button
-                      on:click={() => openEmailTemplate(comm, 'reject')}
-                      class="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded font-medium transition"
-                    >
-                      Reject & Preview Email
-                    </button>
+                      {comm.status.toUpperCase()}
+                    </span>
+                  </div>
+                  <p class="text-slate-300 mb-4">{comm.description}</p>
+
+                  <!-- Reference Images -->
+                  {#if comm.reference_images && comm.reference_images !== "[]"}
+                    <div class="mb-4">
+                      <p class="text-slate-400 text-sm mb-2">
+                        Reference Images:
+                      </p>
+                      <div class="flex flex-wrap gap-2">
+                        {#each JSON.parse(comm.reference_images) as imgUrl, index}
+                          <button
+                            type="button"
+                            on:click={() =>
+                              openImageGallery(
+                                JSON.parse(comm.reference_images),
+                                index,
+                              )}
+                            class="block w-20 h-20 relative group cursor-pointer"
+                          >
+                            <img
+                              src={imgUrl}
+                              alt="Reference"
+                              class="w-full h-full object-cover rounded border border-slate-600 group-hover:border-blue-500 transition-colors"
+                            />
+                          </button>
+                        {/each}
+                      </div>
+                    </div>
+                  {/if}
+
+                  <!-- Date Picker for Approval -->
+                  {#if comm.status === "pending"}
+                    <div class="mb-4">
+                      <p class="text-slate-400 text-sm mb-2">
+                        Set Completion Date:
+                      </p>
+                      <DatePicker
+                        minDate={getMinDate(comm.created_at)}
+                        selectedDate={previewCommId === comm.id && previewRange
+                          ? new Date(previewRange.end)
+                          : null}
+                        on:select={(e) => {
+                          const date = e.detail;
+                          const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+                          handleDatePreview(comm.id, dateStr);
+                        }}
+                      />
+                      {#if previewCommId === comm.id && previewDays}
+                        <p class="text-blue-400 text-sm mt-2">
+                          Duration: {previewDays} days
+                        </p>
+                      {/if}
+                    </div>
+                  {/if}
+
+                  <!-- Action Buttons -->
+                  <div class="flex gap-2 flex-wrap">
+                    {#if comm.status === "pending"}
+                      <button
+                        on:click={() => handleApprove(comm.id)}
+                        class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded font-medium transition"
+                      >
+                        Approve
+                      </button>
+                    {/if}
+                    {#if comm.status === "approved" || comm.status === "paid"}
+                      <button
+                        on:click={() => handleComplete(comm.id)}
+                        class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium transition"
+                      >
+                        Mark Completed
+                      </button>
+                    {/if}
+                    {#if comm.status === "approved" && !comm.paid_amount}
+                      <button
+                        on:click={() => openPaymentModal(comm.id)}
+                        class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded font-medium transition"
+                      >
+                        Mark Paid
+                      </button>
+                    {/if}
+                    {#if comm.paid_amount}
+                      <div
+                        class="px-4 py-2 bg-green-600/20 text-green-400 rounded font-medium"
+                      >
+                        Paid: €{(comm.paid_amount / 100).toFixed(2)}
+                      </div>
+                    {/if}
+                  </div>
+
+                  <!-- Date Info -->
+                  <div class="grid grid-cols-3 gap-4 text-sm mt-4">
+                    <div class="bg-slate-700 p-2 rounded">
+                      <p class="text-slate-400">Received</p>
+                      <p class="text-white font-medium">
+                        {formatDate(comm.created_at)}
+                      </p>
+                    </div>
+                    {#if comm.accepted_at}
+                      <div class="bg-slate-700 p-2 rounded">
+                        <p class="text-slate-400">Accepted</p>
+                        <p class="text-white font-medium">
+                          {formatDate(comm.accepted_at)}
+                        </p>
+                      </div>
+                    {/if}
+                    {#if comm.completion_date}
+                      <div class="bg-slate-700 p-2 rounded">
+                        <p class="text-slate-400">Due</p>
+                        <p class="text-white font-medium">
+                          {formatDate(comm.completion_date)}
+                        </p>
+                      </div>
+                    {/if}
                   </div>
                 </div>
-              {:else if comm.status === 'approved'}
-                <div class="flex gap-2">
-                  <button
-                    on:click={() => handleComplete(comm.id)}
-                    class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium transition"
-                  >
-                    Mark Completed
-                  </button>
-                  <button
-                    on:click={() => handlePaid(comm.id)}
-                    class="flex-1 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded font-medium transition"
-                  >
-                    Mark Paid
-                  </button>
-                </div>
-              {/if}
+              {/each}
             </div>
-          {/each}
-            {#if commissions.length === 0}
-              <div class="text-center py-12">
-                <p class="text-slate-400 text-lg">No commissions yet.</p>
-              </div>
-            {/if}
-          </div>
+          {/if}
         </div>
 
-        <!-- Right: Calendar (span 5) -->
-        <div class="lg:col-span-5">
-          <CommissionCalendar {commissions} on:dayClick={onCalendarDayClick} />
-        </div>
+        <!-- Archives Section -->
+        {#if archivedCommissions.length > 0}
+          <div>
+            <h2 class="text-2xl font-bold text-white mb-4">Archives</h2>
+            <div class="space-y-4">
+              {#each archivedCommissions as comm (comm.id)}
+                {@const hasResults =
+                  comm.final_result_images &&
+                  JSON.parse(comm.final_result_images).length > 0}
+                {@const isFlipped = flippedCards.has(comm.id)}
+
+                <!-- Flippable Card Container -->
+                <div
+                  class="flip-container {isFlipped ? 'z-50 relative' : ''}"
+                  style="perspective: 1000px;"
+                >
+                  <div
+                    class="flip-card"
+                    class:flipped={isFlipped}
+                    style="transform-style: preserve-3d; transition: transform 0.6s;"
+                  >
+                    <!-- FRONT: Commission Info -->
+                    <div
+                      class="flip-face front"
+                      style="backface-visibility: hidden;"
+                    >
+                      <div
+                        class="bg-slate-800 rounded-lg p-6 border border-slate-700 opacity-75"
+                      >
+                        <div class="flex justify-between items-start mb-4">
+                          <div>
+                            <h3 class="text-xl font-bold text-white">
+                              {comm.client_name}
+                            </h3>
+                            <p class="text-slate-400 text-sm">{comm.email}</p>
+                          </div>
+                          <div class="flex flex-col items-end gap-2">
+                            <span
+                              class="px-3 py-1 rounded text-sm font-medium
+                              {comm.status === 'completed'
+                                ? 'bg-green-500/20 text-green-400'
+                                : 'bg-red-500/20 text-red-400'}"
+                            >
+                              {comm.status.toUpperCase()}
+                            </span>
+                            {#if comm.paid_amount}
+                              <p class="text-green-400 font-bold text-2xl">
+                                €{(comm.paid_amount / 100).toFixed(2)}
+                              </p>
+                            {/if}
+                            {#if comm.accepted_at && comm.completion_date}
+                              <p class="text-blue-400 text-lg font-semibold">
+                                {getDaysBetween(
+                                  comm.accepted_at,
+                                  comm.completion_date,
+                                )} days
+                              </p>
+                            {/if}
+                            <button
+                              on:click={() => openDeleteModal(comm.id)}
+                              class="mt-2 px-3 py-1 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded text-xs font-medium transition"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                        <p class="text-slate-300 mb-4">{comm.description}</p>
+
+                        <!-- Reference Images -->
+                        {#if comm.reference_images && comm.reference_images !== "[]"}
+                          <div class="mb-4">
+                            <p class="text-slate-400 text-sm mb-2">
+                              Reference Images:
+                            </p>
+                            <div class="flex flex-wrap gap-2">
+                              {#each JSON.parse(comm.reference_images) as imgUrl, index}
+                                <button
+                                  type="button"
+                                  on:click={() =>
+                                    openImageGallery(
+                                      JSON.parse(comm.reference_images),
+                                      index,
+                                    )}
+                                  class="block w-20 h-20 relative group cursor-pointer"
+                                >
+                                  <img
+                                    src={imgUrl}
+                                    alt="Reference"
+                                    class="w-full h-full object-cover rounded border border-slate-600 group-hover:border-blue-500 transition-colors"
+                                  />
+                                </button>
+                              {/each}
+                            </div>
+                          </div>
+                        {/if}
+
+                        <!-- Upload or Flip Button -->
+                        {#if hasResults}
+                          <button
+                            on:click={() => toggleCardFlip(comm.id)}
+                            class="w-full py-3 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 rounded font-medium transition border border-blue-600/30"
+                          >
+                            👁 Click to view final results ({JSON.parse(
+                              comm.final_result_images,
+                            ).length} images)
+                          </button>
+                        {:else}
+                          <div
+                            class="border-2 border-dashed border-slate-600 rounded-lg p-6 text-center hover:border-slate-500 transition"
+                            on:drop={(e) => handleResultDrop(comm.id, e)}
+                            on:dragover={(e) => e.preventDefault()}
+                          >
+                            {#if uploadingResultFor === comm.id}
+                              <div class="text-blue-400">Uploading...</div>
+                            {:else}
+                              <div class="text-slate-400 mb-2">
+                                <svg
+                                  class="mx-auto h-12 w-12 mb-2"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="2"
+                                    d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                                  />
+                                </svg>
+                                <p class="text-sm">
+                                  Drag & drop final result images
+                                </p>
+                                <p class="text-xs mt-1">or</p>
+                              </div>
+                              <label
+                                class="inline-block px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded cursor-pointer text-sm"
+                              >
+                                Choose Files
+                                <input
+                                  type="file"
+                                  multiple
+                                  accept="image/*"
+                                  class="hidden"
+                                  on:change={(e) =>
+                                    handleResultFileSelect(comm.id, e)}
+                                />
+                              </label>
+                            {/if}
+                          </div>
+                        {/if}
+
+                        <!-- Date Info -->
+                        <div class="grid grid-cols-2 gap-4 text-sm mt-4">
+                          <div class="bg-slate-700 p-2 rounded">
+                            <p class="text-slate-400">Received</p>
+                            <p class="text-white font-medium">
+                              {formatDate(comm.created_at)}
+                            </p>
+                          </div>
+                          {#if comm.completion_date}
+                            <div class="bg-slate-700 p-2 rounded">
+                              <p class="text-slate-400">Completed</p>
+                              <p class="text-white font-medium">
+                                {formatDate(comm.completion_date)}
+                              </p>
+                            </div>
+                          {/if}
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- BACK: Final Results -->
+                    <div
+                      class="flip-face back"
+                      style="backface-visibility: hidden; transform: rotateY(180deg); position: absolute; top: 0; left: 0; width: 100%;"
+                    >
+                      <div
+                        class="bg-slate-800 rounded-lg p-6 border border-slate-700"
+                      >
+                        <div class="flex justify-between items-center mb-4">
+                          <h4 class="text-xl font-bold text-white">
+                            Final Results
+                          </h4>
+                          <button
+                            on:click={() => toggleCardFlip(comm.id)}
+                            class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded font-medium transition"
+                          >
+                            ← Back to Info
+                          </button>
+                        </div>
+
+                        {#if hasResults}
+                          <ResultFlashcard
+                            resultImages={JSON.parse(comm.final_result_images)}
+                          />
+                          <div class="mt-4 flex justify-between items-center">
+                            <p class="text-slate-400 text-sm">
+                              {JSON.parse(comm.final_result_images).length} image(s)
+                            </p>
+                            <label
+                              class="text-blue-400 hover:text-blue-300 text-sm cursor-pointer"
+                            >
+                              + Add More
+                              <input
+                                type="file"
+                                multiple
+                                accept="image/*"
+                                class="hidden"
+                                on:change={(e) =>
+                                  handleResultFileSelect(comm.id, e)}
+                              />
+                            </label>
+                          </div>
+                        {/if}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
       </div>
 
+      <!-- Right: Calendar -->
+      <div>
+        <h2 class="text-2xl font-bold text-white mb-4">Calendar</h2>
+        <CommissionCalendar commissions={activeCommissions} {previewRange} />
+      </div>
+    </div>
+  </div>
 
-      <!-- Email Preview Modal -->
-      {#if showEmailPreview}
-        <div class="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div class="bg-slate-800 rounded-lg p-6 max-w-2xl w-full max-h-96 overflow-auto border border-slate-700">
-            <h3 class="text-xl font-bold text-white mb-4">Email Preview</h3>
-            
-            <div class="bg-slate-700 p-4 rounded mb-4 whitespace-pre-wrap font-mono text-sm text-slate-300">
-              {emailTemplate}
-            </div>
-
-            <div class="flex gap-3">
-              <button
-                on:click={openGmailComposer}
-                class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium transition"
-              >
-                Open in Gmail →
-              </button>
-              <button
-                on:click={copyToClipboard}
-                class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded font-medium transition"
-              >
-                Copy Template
-              </button>
-              <button
-                on:click={() => showEmailPreview = false}
-                class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded font-medium transition"
-              >
-                Close
-              </button>
-            </div>
+  <!-- Payment Modal -->
+  {#if showPaymentModal}
+    <div
+      class="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
+    >
+      <div
+        class="bg-slate-800 rounded-lg p-6 max-w-md w-full border border-slate-700"
+      >
+        <h3 class="text-xl font-bold text-white mb-4">
+          Mark Commission as Paid
+        </h3>
+        <div class="space-y-4">
+          <div>
+            <label class="block text-slate-300 mb-2">Amount Paid (€)</label>
+            <input
+              type="number"
+              step="0.01"
+              bind:value={paymentAmount}
+              class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white"
+              placeholder="100.00"
+            />
+          </div>
+          <div>
+            <label class="block text-slate-300 mb-2"
+              >Payment Reference (Optional)</label
+            >
+            <input
+              type="text"
+              bind:value={paymentReference}
+              class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white"
+              placeholder="e.g., TXN12345"
+            />
           </div>
         </div>
-      {/if}
-
-      <!-- Schedule Modal -->
-      {#if showScheduleModal}
-        <div class="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
-          <div class="bg-slate-800 rounded-lg p-6 max-w-lg w-full border border-slate-700">
-            <h3 class="text-lg font-bold text-white mb-2">Schedule work for {new Date(scheduleDateIso).toLocaleDateString()}</h3>
-
-            <div class="mb-4">
-              <label class="block text-sm text-slate-300 mb-1">Select commission</label>
-              <select bind:value={scheduleSelectedCommissionId} class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white">
-                <option value={null}>-- choose a commission --</option>
-                {#each commissions as c}
-                  <option value={c.id}>{c.client_name} — {c.email} {c.status === 'pending' ? '(pending)' : ''}</option>
-                {/each}
-              </select>
-            </div>
-
-            <div class="mb-4">
-              <label class="block text-sm text-slate-300 mb-1">Time</label>
-              <input type="time" bind:value={scheduleTime} class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white" />
-            </div>
-
-            <div class="flex gap-3">
-              <button on:click={confirmSchedule} class="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded">Confirm</button>
-              <button on:click={closeScheduleModal} class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded">Cancel</button>
-            </div>
-          </div>
+        <div class="flex gap-3 mt-6">
+          <button
+            on:click={confirmPayment}
+            class="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded font-medium transition"
+          >
+            Confirm Payment
+          </button>
+          <button
+            on:click={closePaymentModal}
+            class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded font-medium transition"
+          >
+            Cancel
+          </button>
         </div>
-      {/if}
+      </div>
     </div>
   {/if}
-</div>
 
+  <!-- Delete Modal -->
+  {#if showDeleteModal}
+    <div
+      class="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
+    >
+      <div
+        class="bg-slate-800 rounded-lg p-6 max-w-md w-full border border-slate-700"
+      >
+        <h3 class="text-xl font-bold text-white mb-4">Delete Commission</h3>
+        <p class="text-slate-300 mb-6">
+          Are you sure you want to permanently delete this commission?
+          <span class="text-red-400 font-semibold"
+            >This action cannot be undone.</span
+          >
+        </p>
+        <div class="flex gap-3">
+          <button
+            on:click={confirmDelete}
+            class="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded font-medium transition"
+          >
+            Delete Permanently
+          </button>
+          <button
+            on:click={closeDeleteModal}
+            class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded font-medium transition"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Image Gallery -->
+  {#if showImageGallery}
+    <ImageGallery
+      images={galleryImages}
+      initialIndex={galleryInitialIndex}
+      on:close={() => (showImageGallery = false)}
+    />
+  {/if}
+{/if}
+
+<style>
+  .flip-card {
+    position: relative;
+    width: 100%;
+    min-height: 300px;
+  }
+
+  .flip-card.flipped {
+    transform: rotateY(180deg);
+  }
+
+  .flip-face {
+    width: 100%;
+  }
+
+  .flip-face.back {
+    min-height: 300px;
+  }
+</style>

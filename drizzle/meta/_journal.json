@@ -8,6 +8,27 @@
       "when": 1764674156262,
       "tag": "0000_oval_guardian",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1764867868440,
+      "tag": "0001_sturdy_hammerhead",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1764872084397,
+      "tag": "0002_lying_sprite",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1764911343133,
+      "tag": "0003_groovy_maginty",
+      "breakpoints": true
     }
   ]
 }

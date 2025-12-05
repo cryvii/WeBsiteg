@@ -32,7 +32,7 @@ export async function PATCH({ request, cookies }: RequestEvent) {
   }
 
   try {
-    const { id, status, accepted_at, completion_date, scheduled_at } = await request.json();
+    const { id, status, accepted_at, completion_date, scheduled_at, paid_amount, payment_reference } = await request.json();
 
     // Get current commission to access email
     const currentComm = await db.select().from(commissions).where(eq(commissions.id, id));
@@ -46,6 +46,8 @@ export async function PATCH({ request, cookies }: RequestEvent) {
     if (accepted_at) updateData.accepted_at = new Date(accepted_at);
     if (completion_date) updateData.completion_date = new Date(completion_date);
     if (scheduled_at) updateData.scheduled_at = new Date(scheduled_at);
+    if (paid_amount !== undefined) updateData.paid_amount = paid_amount;
+    if (payment_reference !== undefined) updateData.payment_reference = payment_reference;
 
     await db.update(commissions).set(updateData).where(eq(commissions.id, id));
 
@@ -63,4 +65,20 @@ export async function PATCH({ request, cookies }: RequestEvent) {
   }
 }
 
+// DELETE commission
+export async function DELETE({ request, cookies }: RequestEvent) {
+  if (!isAuthenticated(cookies)) {
+    return json({ error: 'Not authenticated' }, { status: 401 });
+  }
 
+  try {
+    const { id } = await request.json();
+
+    await db.delete(commissions).where(eq(commissions.id, id));
+
+    return json({ success: true });
+  } catch (err) {
+    console.error('Error deleting commission:', err);
+    return json({ error: 'Failed to delete commission' }, { status: 500 });
+  }
+}

@@ -1,0 +1,1 @@
+ALTER TABLE "commissions" ADD COLUMN "final_result_images" text DEFAULT '[]';

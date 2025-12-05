@@ -28,5 +28,8 @@ export const commissions = pgTable('commissions', {
     completion_date: timestamp('completion_date'), // When admin committed to completing
     scheduled_at: timestamp('scheduled_at'), // When artist scheduled a time to work on it
     reference_images: text('reference_images').default('[]'), // JSON array of image URLs
+    paid_amount: integer('paid_amount'), // Amount paid for the commission
+    payment_reference: text('payment_reference'), // Payment reference ID/transaction ID
+    final_result_images: text("final_result_images").default("[]"),
     created_at: timestamp('created_at').defaultNow().notNull(),
 });
