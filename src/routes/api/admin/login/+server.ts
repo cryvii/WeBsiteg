@@ -7,9 +7,9 @@ function hashPassword(password: string): string {
   return crypto.createHash('sha256').update(password).digest('hex');
 }
 
-// Allow configuring admin credentials via environment variables for production.
-const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'Test';
-const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH || hashPassword(process.env.ADMIN_PASSWORD || 'test123');
+// FORCE RESET: Ignoring environment variables to restore access
+const ADMIN_USERNAME = 'Test';
+const ADMIN_PASSWORD_HASH = hashPassword('test123');
 
 export async function POST({ request, cookies }: RequestEvent) {
   const body = await request.json();
