@@ -53,6 +53,7 @@ export async function POST({ request }: RequestEvent) {
         return json({ success: true, message: 'Commission request received.' });
     } catch (err) {
         console.error('API /api/commission error:', err);
-        return json({ error: 'Internal server error' }, { status: 500 });
+        const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+        return json({ error: errorMessage }, { status: 500 });
     }
 }
